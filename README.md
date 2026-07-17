@@ -34,8 +34,8 @@ The system targets specific publication types (Randomized Controlled Trials, Sys
 
 ```
 pmc-pipeline/
-├── dashboard/                   # Web dashboard codebase
-│   ├── app.py                   # Aiohttp web server & subprocess supervisor
+├── dashboard/                   # Web dashboard codebase.
+│   ├── app.py                   # Aiohttp web server & subprocess supervisor.
 │   └── static/                  # HTML, CSS, and JS files for the UI
 │       ├── index.html
 │       ├── style.css
@@ -50,7 +50,7 @@ pmc-pipeline/
 │   ├── config.py                # Config parser with .env & env var fallback
 │   ├── database.py              # SQLite schema & database handlers
 │   ├── dedup.py                 # File & database deduplication logic
-│   ├── downloader.py            # XML fetcher & XML parsing engine
+│   ├── downloader.py            # XML fetcher & XML parsing engine. 
 │   ├── id_converter.py          # PMID to PMCID translator
 │   ├── oa_filter.py             # Open Access license validation
 │   ├── search.py                # PubMed E-utilities searcher
