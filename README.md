@@ -1,4 +1,16 @@
+---
+title: PMC Oncology Ingestion Pipeline
+emoji: 📊
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: 4.44.1
+app_file: app.py
+pinned: false
+---
+
 # PubMed Central (PMC) Oncology Literature Ingestion Pipeline & Dashboard
+
 
 An end-to-end asynchronous Python pipeline and interactive web dashboard designed to query, filter, download, parse, and persist Open Access (OA) oncology literature from PubMed Central (PMC).
 
