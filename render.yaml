@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: pmc-oncology-pipeline
+    env: docker
+    dockercontext: .
+    dockerfilepath: Dockerfile
+    plan: free
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: NCBI_API_KEY
+        sync: false
+        required: false
+      - key: NCBI_EMAIL
+        sync: false
+        required: false

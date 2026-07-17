@@ -151,3 +151,47 @@ To maintain clean and secure repository structures, the following guidelines are
 - **Zero Credentials Committed:** API keys, emails, and tokens are decoupled from the static yaml files and loaded via `.env` or system environment variables.
 - **Corpus Segregation:** Raw downloads (`data/xml/`, `data/json/`), run checkpoints, databases, and logs are saved inside the gitignored `data/` folder.
 - **Environment Isolation:** The `venv` directory is excluded from version control.
+
+---
+
+## 🌐 Deployment & Containerization
+
+This project includes configuration setups for local containerized usage and one-click cloud deployment.
+
+### 1. Run with Docker
+You can package the entire application inside a Docker container, enabling it to run seamlessly on Windows, macOS, or Linux without manual python setup.
+
+```bash
+# Build the Docker image
+docker build -t pmc-pipeline .
+
+# Run the container (maps dashboard to port 8080)
+# The local database and download files are mounted to a persistent Docker volume 'pmc_data'
+docker run -d \
+  -p 8080:8080 \
+  -v pmc_data:/app/data \
+  --name pmc-pipeline \
+  pmc-pipeline
+```
+
+To run with NCBI API keys passed dynamically:
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v pmc_data:/app/data \
+  -e NCBI_API_KEY="your_api_key" \
+  -e NCBI_EMAIL="your_email" \
+  --name pmc-pipeline \
+  pmc-pipeline
+```
+
+### 2. Deploy to the Cloud (Render / Railway)
+Since the application adheres to standard containerization protocols:
+- **Render Deployment:** 
+  1. Push your changes to your GitHub repository.
+  2. Create a new **Web Service** on [Render](https://render.com).
+  3. Connect your repository and select **Docker** as the environment.
+  4. Render will automatically read the `render.yaml` template and launch the dashboard web service.
+- **Railway / Fly.io:** Directly import the GitHub repository; their engines will auto-detect the `Dockerfile` and deploy the service.
+
+*(Note: Ensure your cloud provider's service supports persistent volumes if you wish to persist the SQLite database and raw files across redeployments).*

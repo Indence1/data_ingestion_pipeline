@@ -345,15 +345,18 @@ app.router.add_get("/", index_handler)
 
 def main():
     import argparse
+    port_env = os.environ.get("PORT")
+    default_port = int(port_env) if port_env else 8080
+
     parser = argparse.ArgumentParser(description="Ingestion Pipeline Dashboard Server")
-    parser.add_argument("--port", type=int, default=8080, help="Dashboard port (default: 8080)")
+    parser.add_argument("--port", type=int, default=default_port, help=f"Dashboard port (default: {default_port})")
     args = parser.parse_args()
 
     # Create directories if missing
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     
-    logger.info(f"Starting dashboard server at http://localhost:{args.port}")
-    web.run_app(app, port=args.port)
+    logger.info(f"Starting dashboard server at http://0.0.0.0:{args.port}")
+    web.run_app(app, host="0.0.0.0", port=args.port)
 
 if __name__ == "__main__":
     main()
