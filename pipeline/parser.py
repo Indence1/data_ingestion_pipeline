@@ -115,7 +115,7 @@ class ParsedPaper:
     publication_types: list[str] = field(default_factory=list)
     mesh_terms: list[str] = field(default_factory=list)
     clinical_trial_ids: list[str] = field(default_factory=list)
-    tables: list[str] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
     is_human_study: bool = False
     is_animal_study: bool = False
     is_excluded: bool = False
@@ -382,30 +382,57 @@ class JATSParser:
 
         return result
 
-    def _extract_tables(self, root: etree._Element) -> list[str]:
-        tables: list[str] = []
+    def _extract_tables(self, root: etree._Element) -> list[dict[str, Any]]:
+        tables: list[dict[str, Any]] = []
         for tw in root.findall(".//table-wrap"):
             parts: list[str] = []
-
+            
             # Extract caption
+            caption_text = ""
             caption_el = tw.find(".//caption")
             if caption_el is not None:
                 caption_text = self._text(caption_el)
                 if caption_text:
                     parts.append(f"Table Caption: {caption_text}")
 
-            # Extract cell texts row by row
-            for tr in tw.findall(".//tr"):
-                row_parts = []
-                for cell in tr.xpath(".//th | .//td"):
-                    cell_text = self._text(cell)
-                    if cell_text:
-                        row_parts.append(cell_text)
-                if row_parts:
-                    parts.append(" | ".join(row_parts))
+            headers = []
+            rows = []
+            
+            # Find the actual <table> element
+            table_el = tw.find(".//table")
+            if table_el is not None:
+                # Headers
+                thead = table_el.find(".//thead")
+                if thead is not None:
+                    for tr in thead.findall(".//tr"):
+                        tr_headers = [self._text(cell) for cell in tr.xpath(".//th | .//td")]
+                        headers.extend(tr_headers)
+                
+                # Rows
+                tbody = table_el.find(".//tbody")
+                row_container = tbody if tbody is not None else table_el
+                for tr in row_container.findall(".//tr"):
+                    if thead is not None and tr in thead.xpath(".//tr"):
+                        continue
+                    row_cells = [self._text(cell) for cell in tr.xpath(".//th | .//td")]
+                    if row_cells:
+                        rows.append(row_cells)
+                        parts.append(" | ".join(row_cells))
+            else:
+                for tr in tw.findall(".//tr"):
+                    row_cells = [self._text(cell) for cell in tr.xpath(".//th | .//td")]
+                    if row_cells:
+                        rows.append(row_cells)
+                        parts.append(" | ".join(row_cells))
 
-            if parts:
-                tables.append("\n".join(parts))
+            tables.append({
+                "linearized_text": "\n".join(parts),
+                "structured_json": {
+                    "caption": caption_text,
+                    "headers": headers,
+                    "rows": rows
+                }
+            })
         return tables
 
     def _extract_trial_ids(self, root: etree._Element) -> list[str]:

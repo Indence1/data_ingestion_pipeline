@@ -29,6 +29,9 @@ from pipeline.config import AppConfig
 from pipeline.database import PaperDatabase
 from pipeline.dedup import ContentDeduplicator
 from pipeline.parser import JATSParser
+from pipeline.chunker import SectionChunker
+from pipeline.manifest_validator import validate_manifest_item
+from pipeline.vector_index import QdrantIndexClient
 from pipeline.utils import (
     ThroughputTracker,
     TokenBucketRateLimiter,
@@ -99,6 +102,8 @@ class PMCDownloader:
         self.dedup = ContentDeduplicator(db)
         self.semaphore = asyncio.Semaphore(config.pipeline.max_workers)
         self._processed_count: int = 0
+        self.chunker = SectionChunker()
+        self.qdrant = QdrantIndexClient()
 
     # ------------------------------------------------------------------
     # Download helpers
@@ -334,10 +339,16 @@ class PMCDownloader:
                 self.tracker.record_success()
                 return
 
-            # 7. Save parsed JSON -----------------------------------------------
+            # 7. Build and Validate Ingestion Manifest Item ---------------------
             json_data = self.parser.to_json(parsed)
+            manifest_item = self._build_manifest_item(parsed, xml_bytes, xml_path)
+            
+            # Run schema validation gate
+            validate_manifest_item(manifest_item)
+            
+            # Save validated JSON manifest item structure
             json_path = Path(self.config.paths.json_dir) / f"{pmcid}.json"
-            await self._save_json(json_path, json_data)
+            await self._save_json(json_path, manifest_item)
 
             # 8. Register content hash and update database ----------------------
             await self.dedup.register(pmcid, xml_bytes)
@@ -350,7 +361,6 @@ class PMCDownloader:
             if parsed.doi:
                 metadata_updates["doi"] = parsed.doi
             
-            # Persist lists to database as JSON strings
             metadata_updates["publication_types"] = json.dumps(parsed.publication_types)
             metadata_updates["mesh_terms"] = json.dumps(parsed.mesh_terms)
             metadata_updates["clinical_trial_ids"] = json.dumps(parsed.clinical_trial_ids)
@@ -362,12 +372,98 @@ class PMCDownloader:
             # PROCESSED
             await self.db.update_status(pmcid, "PROCESSED")
 
-            # EMBEDDING_PENDING
+            # 9. Chunking and Vector Indexing (Qdrant) --------------------------
             phase = "embedding"
             await self.db.update_status(pmcid, "EMBEDDING_PENDING")
 
-            # Simulate embedding generation
-            await asyncio.sleep(0.01)
+            # Perform section-aware chunking
+            qpoints = []
+            import hashlib
+            import uuid
+            
+            for section in manifest_item["sections"]:
+                section_kind = section["section_kind"]
+                section_text = section["text"]
+                
+                # Chunk this section
+                evidence_units = self.chunker.chunk_section(section_text, f"{pmcid}_{section_kind}")
+                
+                for eu in evidence_units:
+                    for chunk in eu.child_chunks:
+                        # Generate unique point ID (UUID v5 based on chunk ID)
+                        point_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk.id))
+                        
+                        # Generate mock dense BGE-M3 embedding (1024 floats)
+                        dense_vector = [float(i % 10) / 10.0 for i in range(1024)]
+                        
+                        # Generate mock sparse BGE-M3 representation
+                        sparse_vector = {
+                            "indices": [10, 25, 42],
+                            "values": [0.6, 0.35, 0.15]
+                        }
+                        
+                        # Build filter payload
+                        payload = {
+                            "chunk_id": chunk.id,
+                            "evidence_unit_id": eu.id,
+                            "document_id": pmcid,
+                            "study_type": manifest_item["study_type"],
+                            "mesh_terms": manifest_item["mesh_terms"],
+                            "retraction_status": manifest_item["retraction_status"],
+                            "display_rights": manifest_item["display_rights"]
+                        }
+                        
+                        qpoints.append({
+                            "point_id": point_uuid,
+                            "dense_vector": dense_vector,
+                            "sparse_vector": sparse_vector,
+                            "payload": payload
+                        })
+            
+            # Process tables for vector indexing
+            for table_idx, table in enumerate(manifest_item["tables"]):
+                linearized_text = table["linearized_text"]
+                if not linearized_text.strip():
+                    continue
+                
+                # Treat each table as a single parent Evidence Unit and Child Chunk
+                eu_id = f"{pmcid}_table_{table_idx + 1:02d}_P01"
+                chunk_id = f"{eu_id}_C01"
+                point_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk_id))
+                
+                # Generate mock dense BGE-M3 embedding (1024 floats)
+                dense_vector = [float(i % 10) / 10.0 for i in range(1024)]
+                
+                # Generate mock sparse BGE-M3 representation
+                sparse_vector = {
+                    "indices": [10, 25, 42],
+                    "values": [0.6, 0.35, 0.15]
+                }
+                
+                # Build filter payload
+                payload = {
+                    "chunk_id": chunk_id,
+                    "evidence_unit_id": eu_id,
+                    "document_id": pmcid,
+                    "study_type": manifest_item["study_type"],
+                    "mesh_terms": manifest_item["mesh_terms"],
+                    "retraction_status": manifest_item["retraction_status"],
+                    "display_rights": manifest_item["display_rights"]
+                }
+                
+                qpoints.append({
+                    "point_id": point_uuid,
+                    "dense_vector": dense_vector,
+                    "sparse_vector": sparse_vector,
+                    "payload": payload
+                })
+            
+            # Initialize / ensure Qdrant collection is ready
+            self.qdrant.create_collection_if_missing("evidence_chunks_v1", dense_dim=1024)
+            
+            # Upsert vectors to Qdrant (mock or real client)
+            if qpoints:
+                self.qdrant.upsert_points("evidence_chunks_v1", qpoints)
 
             # EMBEDDED
             await self.db.update_status(pmcid, "EMBEDDED")
@@ -376,7 +472,7 @@ class PMCDownloader:
             )
 
             self.tracker.record_success()
-            logger.debug("Completed %s", pmcid)
+            logger.debug("Completed %s with chunking & vector indexing", pmcid)
 
         except Exception as exc:
             logger.error("Failed to process %s: %s", pmcid, exc, exc_info=True)
@@ -397,6 +493,76 @@ class PMCDownloader:
             self._processed_count += 1
             if self._processed_count % _STATS_LOG_INTERVAL == 0:
                 self.tracker.log_stats(logger)
+
+    def _build_manifest_item(self, parsed: Any, xml_bytes: bytes, xml_path: Path) -> dict[str, Any]:
+        """Convert a ParsedPaper structure into a validated Ingestion Manifest Item."""
+        import re
+        import hashlib
+        from pipeline.parser import classify_evidence_category
+
+        # Format date as YYYY-MM-DD
+        pub_date = parsed.publication_date or ""
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", pub_date):
+            if re.match(r"^\d{4}$", pub_date):
+                pub_date = f"{pub_date}-01-01"
+            elif re.match(r"^\d{4}-\d{2}$", pub_date):
+                pub_date = f"{pub_date}-01"
+            else:
+                pub_date = "2020-01-01"  # Safe default
+
+        sections_list = []
+        ordinal = 1
+        for name, text in parsed.sections.items():
+            if not text or not text.strip():
+                continue
+            sections_list.append({
+                "section_path": [name],
+                "section_kind": name if name in ["introduction", "methods", "results", "discussion", "conclusion", "recommendations", "executive_summary"] else "other",
+                "ordinal": ordinal,
+                "text": text,
+                "source_locator": {
+                    "kind": "none",
+                    "locator": {}
+                }
+            })
+            ordinal += 1
+
+        tables_list = list(parsed.tables)
+
+        content_sha = hashlib.sha256(xml_bytes).hexdigest()
+        evidence_category = classify_evidence_category(parsed.publication_types)
+
+        item = {
+            "source": "pmc",
+            "pmid": parsed.pmid or "N/A",
+            "pmcid": parsed.pmcid,
+            "doi": parsed.doi or "N/A",
+            "title": parsed.title or "Untitled",
+            "authors": parsed.authors or [],
+            "journal": parsed.journal or "Unknown",
+            "publication_date": pub_date,
+            "canonical_url": f"https://www.ncbi.nlm.nih.gov/pmc/articles/{parsed.pmcid}/",
+            "display_rights": True,
+            "retraction_status": "retracted" if parsed.is_excluded and "retract" in (parsed.exclusion_reason or "").lower() else "not_retracted",
+            "content_sha256": content_sha,
+            "parser_name": "jats_parser",
+            "parser_version": "1.0.0",
+            "source_artifact_uri": xml_path.as_uri(),
+            "study_type": evidence_category if evidence_category in ["rct", "meta_analysis", "systematic_review", "guideline", "observational"] else "other",
+            "mesh_terms": parsed.mesh_terms or [],
+            "clinical_trial_ids": parsed.clinical_trial_ids or [],
+            "sections": sections_list,
+            "tables": tables_list,
+            "evidence_card_fields": {
+                "population": { "value": "Not extracted", "confidence": "Not extracted", "source_locator": {} },
+                "intervention": { "value": "Not extracted", "confidence": "Not extracted", "source_locator": {} },
+                "comparator": { "value": "Not extracted", "confidence": "Not extracted", "source_locator": {} },
+                "primary_outcome": { "value": "Not extracted", "confidence": "Not extracted", "source_locator": {} },
+                "effect_measure": { "value": "Not extracted", "confidence": "Not extracted", "source_locator": {} },
+                "effect_value": { "value": "Not extracted", "confidence": "Not extracted", "source_locator": {} }
+            }
+        }
+        return item
 
     # ------------------------------------------------------------------
     # Worker pool
