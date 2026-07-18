@@ -92,8 +92,9 @@ class IDConverter:
             "format": "json",
             "idtype": "pmid",
             "tool": self.config.ncbi.tool_name,
-            "email": self.config.ncbi.email,
         }
+        if self.config.ncbi.email:
+            params["email"] = self.config.ncbi.email
         if self.config.ncbi.api_key:
             params["api_key"] = self.config.ncbi.api_key
 

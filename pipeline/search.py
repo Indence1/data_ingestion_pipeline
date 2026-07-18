@@ -99,10 +99,12 @@ class PubMedSearcher:
             "usehistory": "y",
             "retmax": "0",
             "retmode": "xml",
-            "api_key": self.config.ncbi.api_key,
             "tool": self.config.ncbi.tool_name,
-            "email": self.config.ncbi.email,
         }
+        if self.config.ncbi.api_key:
+            params["api_key"] = self.config.ncbi.api_key
+        if self.config.ncbi.email:
+            params["email"] = self.config.ncbi.email
 
         await self.rate_limiter.acquire()
         async with self.session.get(
@@ -138,10 +140,12 @@ class PubMedSearcher:
             "retmax": str(retmax),
             "rettype": "uilist",
             "retmode": "text",
-            "api_key": self.config.ncbi.api_key,
             "tool": self.config.ncbi.tool_name,
-            "email": self.config.ncbi.email,
         }
+        if self.config.ncbi.api_key:
+            params["api_key"] = self.config.ncbi.api_key
+        if self.config.ncbi.email:
+            params["email"] = self.config.ncbi.email
 
         await self.rate_limiter.acquire()
         async with self.session.get(
