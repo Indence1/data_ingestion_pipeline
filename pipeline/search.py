@@ -90,7 +90,9 @@ class PubMedSearcher:
 
         Returns (total_count, webenv, query_key).
         """
-        full_query = f"{query.strip()} AND {date_filter}"
+        # Clean query by replacing newlines with spaces and collapsing multiple spaces
+        clean_q = " ".join(query.replace("\n", " ").replace("\r", " ").split())
+        full_query = f"{clean_q} AND {date_filter}"
         params = {
             "db": "pubmed",
             "term": full_query,
