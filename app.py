@@ -48,6 +48,7 @@ config = load_config(str(config_path))
 # Global process tracking
 active_process = None
 active_task_type = None
+last_logged_lines = 0
 
 # Log file for progress streaming
 LOG_FILE_PATH = PROJECT_ROOT / "data" / "logs" / "pipeline_run.log"
@@ -156,11 +157,14 @@ async def async_estimate(pub_start, pub_end, categories):
 
 def start_pipeline_run(mode, limit):
     """Launch the ingestion pipeline in a background process."""
-    global active_process, active_task_type
+    global active_process, active_task_type, last_logged_lines
     logger.info(f"start_pipeline_run called with mode={mode}, limit={limit}")
     if active_process is not None and active_process.poll() is None:
         logger.warning("Pipeline process is already running.")
         return "A pipeline process is already running."
+
+    # Reset log tracking
+    last_logged_lines = 0
 
     # Make sure logs directory exists
     LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -219,7 +223,7 @@ def stop_pipeline_run():
 
 def read_logs():
     """Read the latest log lines for the UI status."""
-    global active_process
+    global active_process, last_logged_lines
     status_msg = "🟢 Idle"
     if active_process is not None and active_process.poll() is None:
         status_msg = f"⚡ Running ({active_task_type.upper()} mode)"
@@ -230,9 +234,13 @@ def read_logs():
     if LOG_FILE_PATH.exists():
         try:
             with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
-                # Read last 40 lines
                 lines = f.readlines()
                 log_content = "".join(lines[-40:])
+                # Stream new lines to container console logs for debugging
+                if len(lines) > last_logged_lines:
+                    for line in lines[last_logged_lines:]:
+                        logger.info(f"[PIPE_LOG] {line.strip()}")
+                    last_logged_lines = len(lines)
         except Exception as e:
             log_content = f"Error reading logs: {e}"
     else:
