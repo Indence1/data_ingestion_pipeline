@@ -29,10 +29,14 @@ The system targets specific publication types (Randomized Controlled Trials, Sys
   - Robust rate-limiting (token bucket algorithm).
   - Exponential backoff retry logic.
   - Checkpoint persistence to safely resume interrupted runs.
-- **Deduplication & Extraction:** Parses PMC XML articles (using `lxml`), extracts structured metadata (Title, Authors, Journal, Dates, Abstract, Sections, Figures, Tables, Citations), and saves them as:
-  - Structured **JSON files**
-  - Raw **XML files**
-  - Rows in a **SQLite database**
+- **Deduplication & Extraction:** Parses PMC XML articles (using `lxml`), extracts structured metadata (Title, Authors, Journal, Dates, Abstract, Sections, Figures, Tables, Citations).
+
+### 🗂️ Advanced Ingestion Schema & RAG Preparation
+- **Section-Aware Chunking Engine (`pipeline/chunker.py`):** Splits document sections into overlapping child chunks (256-320 tokens) and parent evidence units (600-1200 tokens) respecting sentence and table row boundaries.
+- **Qdrant Vector Indexing Adapter (`pipeline/vector_index.py`):** Inserts dense and sparse vectors into Qdrant collections. Operates in mock mode if `qdrant-client` is missing.
+- **JSON Schema Validation Contract (`pipeline/manifest_validator.py`):** Validates ingestion payloads against `integrations/ingestion_contract/v1.schema.json` before database indexing.
+- ** SQLAlchemy 2.0 PostgreSQL/SQLite Schema (`pipeline/models.py`):** Declares relational entities mapping users, sessions, corpus snapshots, revisions, document sections, chunks, evidence cards, query traces, and user feedback.
+- **Data Backfill Migration Utility (`scripts/migrate_to_postgres.py`):** Standard script to read SQLite cache (`papers.db`), parse XMLs, segment them into parent-child schemas, validate contracts, and load them into a PostgreSQL database or local SQLite mirror.
 
 ### 📊 Web-Based Management Dashboard
 - **Real-Time Pipeline Tracking:** Monitor current execution logs, active stages, throughput, and progress.
@@ -57,17 +61,29 @@ pmc-pipeline/
 │   ├── json/                    # Parsed structured JSON articles
 │   ├── xml/                     # Raw full-text XML articles
 │   ├── logs/                    # Execution logs
-│   └── metadata/                # SQLite database (papers.db)
+│   └── metadata/                # SQLite database (papers.db & postgres_mirror.db)
+├── integrations/
+│   └── ingestion_contract/
+│       └── v1.schema.json       # JSON Schema validation contract definition
 ├── pipeline/                    # Pipeline modular package
 │   ├── config.py                # Config parser with .env & env var fallback
 │   ├── database.py              # SQLite schema & database handlers
 │   ├── dedup.py                 # File & database deduplication logic
-│   ├── downloader.py            # XML fetcher & XML parsing engine. 
+│   ├── downloader.py            # XML fetcher & XML parsing engine.
 │   ├── id_converter.py          # PMID to PMCID translator
 │   ├── oa_filter.py             # Open Access license validation
 │   ├── search.py                # PubMed E-utilities searcher
 │   ├── species_filter.py        # Species MeSH verification
+│   ├── chunker.py               # Parent-child chunking & sentence offset parser
+│   ├── manifest_validator.py    # Schema validation runner
+│   ├── models.py                # SQLAlchemy relational target tables models
+│   ├── vector_index.py          # Qdrant client dense+sparse index adapter
 │   └── utils.py                 # Checkpoints, rate limiting, and trackers
+├── scripts/
+│   ├── migrate_to_postgres.py   # Backfills flat SQLite corpus to target models schema
+│   └── inspect_mirror.py        # Script to inspect migrated DB sections & chunks
+├── tests/
+│   └── test_migration.py        # Schema and chunking engine unit tests
 ├── .env.example                 # Template for setting up environment variables
 ├── .gitignore                   # Standard gitignore configurations
 ├── config.yaml.example          # Template for project-wide configuration parameters
@@ -156,6 +172,26 @@ After launching, open your browser and navigate to:
 http://localhost:8080
 ```
 
+### 📂 Database Migration & RAG Backfilling
+If you have run the pipeline and populated the SQLite cache, you can process raw XMLs, extract chunks, validate JSON schemas, and load them into your relational database:
+
+```bash
+# Migrate SQLite data to a target SQLite mirror database (default)
+python scripts/migrate_to_postgres.py
+
+# Migrate SQLite data to a PostgreSQL instance
+python scripts/migrate_to_postgres.py --db-url "postgresql://user:password@localhost:5432/dbname"
+
+# Verify migrated tables, chunks, and sentence structures
+python scripts/inspect_mirror.py
+```
+
+### 🧪 Running Unit Tests
+You can run automated schema validation and chunker unit tests:
+```bash
+python -m unittest tests/test_migration.py
+```
+
 ---
 
 ## Security & Best Practices
@@ -177,10 +213,10 @@ You can package the entire application inside a Docker container, enabling it to
 # Build the Docker image
 docker build -t pmc-pipeline .
 
-# Run the container (maps dashboard to port 8080)
+# Run the container (maps dashboard to port 7860)
 # The local database and download files are mounted to a persistent Docker volume 'pmc_data'
 docker run -d \
-  -p 8080:8080 \
+  -p 7860:7860 \
   -v pmc_data:/app/data \
   --name pmc-pipeline \
   pmc-pipeline
@@ -189,7 +225,7 @@ docker run -d \
 To run with NCBI API keys passed dynamically:
 ```bash
 docker run -d \
-  -p 8080:8080 \
+  -p 7860:7860 \
   -v pmc_data:/app/data \
   -e NCBI_API_KEY="your_api_key" \
   -e NCBI_EMAIL="your_email" \
