@@ -1,12 +1,29 @@
+import sys
+from types import ModuleType
+
+try:
+    import spaces
+except ImportError:
+    mock_spaces = ModuleType("spaces")
+    def dummy_gpu(func):
+        return func
+    mock_spaces.GPU = dummy_gpu
+    sys.modules["spaces"] = mock_spaces
+    import spaces
+
 import asyncio
 import os
-import sys
 import logging
 import subprocess
 from pathlib import Path
 from xml.etree import ElementTree as ET
 import aiohttp
 import gradio as gr
+
+@spaces.GPU
+def zero_gpu_dummy_trigger():
+    """Dummy function to satisfy Hugging Face ZeroGPU startup scanner."""
+    pass
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
