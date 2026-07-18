@@ -157,7 +157,9 @@ async def async_estimate(pub_start, pub_end, categories):
 def start_pipeline_run(mode, limit):
     """Launch the ingestion pipeline in a background process."""
     global active_process, active_task_type
+    logger.info(f"start_pipeline_run called with mode={mode}, limit={limit}")
     if active_process is not None and active_process.poll() is None:
+        logger.warning("Pipeline process is already running.")
         return "A pipeline process is already running."
 
     # Make sure logs directory exists
@@ -167,9 +169,15 @@ def start_pipeline_run(mode, limit):
     if limit and int(limit) > 0:
         args.extend(["--limit", str(limit)])
 
+    logger.info(f"Subprocess args: {args}")
+
     # Clear previous logs
-    with open(LOG_FILE_PATH, "w", encoding="utf-8") as f:
-        f.write(f"--- Launching pipeline in mode: {mode.upper()} ---\n")
+    try:
+        with open(LOG_FILE_PATH, "w", encoding="utf-8") as f:
+            f.write(f"--- Launching pipeline in mode: {mode.upper()} ---\n")
+    except Exception as e:
+        logger.error(f"Failed to write initial log header: {e}")
+        return f"Failed to open log file: {str(e)}"
 
     # Start subprocess
     try:
@@ -181,8 +189,10 @@ def start_pipeline_run(mode, limit):
             cwd=str(PROJECT_ROOT)
         )
         active_task_type = mode
+        logger.info("Subprocess started successfully.")
         return f"Successfully started pipeline run in '{mode}' mode."
     except Exception as e:
+        logger.error(f"Failed to start pipeline subprocess: {e}", exc_info=True)
         return f"Failed to start pipeline: {str(e)}"
 
 def stop_pipeline_run():
